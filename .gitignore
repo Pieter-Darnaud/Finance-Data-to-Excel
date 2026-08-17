@@ -16,3 +16,12 @@ __pycache__/
 
 # Scratch / experiments (kept locally, not committed)
 Tester.py
+
+# Scratch
+leet.py
+
+# Obsidian config
+.obsidian/
+
+# Superseded by the four modules (kept locally)
+Financials.py
