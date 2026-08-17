@@ -43,7 +43,7 @@ def debtToEquity(totalLiabilities, shareholderEquity):
     return totalLiabilities / shareholderEquity
 
 def returnOnEquity(netIncome, shareholderEquity):
-    if shareholderEquity == 0:
+    if shareholderEquity == 0: # Revenue and total assets cancel
             return "N/A"
     return netIncome / shareholderEquity
 
