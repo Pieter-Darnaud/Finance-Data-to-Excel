@@ -1,8 +1,14 @@
 # Finance Data to Excel
 
+**🔗 Live app: [finance-data-to-excel.streamlit.app](https://finance-data-to-excel.streamlit.app/)**
+
 A Python tool that pulls public company financials from Yahoo Finance, computes gross
 margin, classifies each company by margin band, and exports a formatted **Excel
 dashboard**.
+
+The command-line tool is complete and documented below. A **Streamlit web front-end** is
+in progress at the link above — it wraps the same accounting engine (`metrics.py`) so
+that analyzing a ticker takes a text box instead of a code edit.
 
 ## What it does
 
