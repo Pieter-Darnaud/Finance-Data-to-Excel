@@ -27,7 +27,7 @@ ws["E1"] = "Flag"
 # This loop returns ticker, revenue, cogs, and gross margin values
 for i in range (len(companies)):
     flag = ""
-    if grossMargin(companies[i]["revenue"], companies[i]["cogs"]) == "N/A":
+    if  grossMargin(companies[i]["revenue"], companies[i]["cogs"]) == None:
             flag = "no gross margin"
     elif grossMargin(companies[i]["revenue"], companies[i]["cogs"]) < low:
             flag = "low"
