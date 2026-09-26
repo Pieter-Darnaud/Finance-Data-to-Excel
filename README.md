@@ -8,6 +8,9 @@ dashboard with trend charts and a downloadable Excel workbook.
 
 Type a ticker, get the analysis. No installation required.
 
+Built in Python, using an LLM for terminal workflows, library imports, and Markdown
+documentation.
+
 ## What it shows
 
 For any ticker, the app reports nine ratios grouped by what they measure:
