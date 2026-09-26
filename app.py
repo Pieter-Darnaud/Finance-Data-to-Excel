@@ -2,6 +2,7 @@ import streamlit as s
 
 import pandas as p
 
+import yfinance as yf
 
 
 from metrics import grossMargin, currentRatio, netMargin, opMargin, quickRatio, debtToEquity, returnOnEquity, returnOnAssets, interestCoverage
@@ -10,7 +11,9 @@ from metrics import (grossMarginDelta, opMarginDelta, netMarginDelta,
                      currentRatioDelta, quickRatioDelta, debtToEquityDelta,
                      returnOnEquityDelta, returnOnAssetsDelta, interestCoverageDelta)
 
-from data import get_financials, history
+from data import history
+
+from export import workbookBytes
 
 
 def fmt(value, kind):
@@ -57,8 +60,8 @@ ticker = s.sidebar.text_input("Ticker", value="AAPL").upper().strip()
 if not ticker:
     s.stop()
 with s.spinner(f"getting {ticker}"):
-    company = get_financials(ticker)
     years = history(ticker)
+    company = years[0]
     grossMarginSeries      = [grossMargin(y["revenue"], y["cogs"]) for y in years]
     opMarginSeries         = [opMargin(y["operatingIncome"], y["revenue"]) for y in years]
     netMarginSeries        = [netMargin(y["netIncome"], y["revenue"]) for y in years]
@@ -95,6 +98,7 @@ with s.expander("Raw figures"):
     s.metric("Total Assets", fmt(company["totalAssets"], "currency"))
     s.metric("Net Income", fmt(company["netIncome"], "currency"))
 
+df = yf.download(company["ticker"], period="1y")
 
 one, two, three, four = s.tabs(["Profitability", "Liquidity", "Leverage", "Returns"])
 
@@ -110,6 +114,7 @@ with one:
     with c3:
         s.metric("Net Margin", fmt(netMargin(company["netIncome"], company["revenue"]), "percent"),
                  delta=deltaOf(nmD, "net margin percent change 1", "percent"))
+    
 
     
     marginDf = p.DataFrame(
@@ -117,7 +122,7 @@ with one:
         "Gross Margin": grossMarginSeries,
         "Operating Margin": opMarginSeries,
         "Net Margin": netMarginSeries},
-        index=[y["year"] for y in years]
+        index=[str(y["year"].year)[0:1] + str(y["year"].year)[1:] for y in years]
     
     )
     s.line_chart(marginDf[::-1])
@@ -125,6 +130,10 @@ with one:
         missingNote(grossMarginSeries, years, "Gross margin")
         missingNote(opMarginSeries, years, "Operating margin")
         missingNote(netMarginSeries, years, "Net margin")
+
+    s.write("Most recent Year" , df.index.year[0])
+
+   
 
 
 with two:
@@ -144,7 +153,7 @@ with two:
         "Current Ratio": currentRatioSeries,
         "Quick Ratio":  quickRatioSeries
     },
-    index = [y["year"] for y in years]
+    index = [str(y["year"].year)[0:1] + str(y["year"].year)[1:] for y in years]
     )
 
 
@@ -153,7 +162,7 @@ with two:
     with s.expander("Missing years"):
         missingNote(currentRatioSeries, years, "Current ratio")
         missingNote(quickRatioSeries, years, "Quick ratio")
-
+    s.write("Most recent Year" , df.index.year[0])
 
 with three:
     
@@ -173,7 +182,7 @@ with three:
         "Debt to Equity": debtToEquitySeries
         
     },
-    index = [y["year"] for y in years]
+    index = [str(y["year"].year)[0:1] + str(y["year"].year)[1:] for y in years]
     )
 
     s.line_chart(leverageDF[::-1])
@@ -183,7 +192,7 @@ with three:
         "Interest Coverage": interestCoverageSeries,
         
     },
-    index = [y["year"] for y in years]
+    index = [str(y["year"].year)[0:1] + str(y["year"].year)[1:] for y in years]
     )
 
     s.line_chart(leverage2DF[::-1])
@@ -191,6 +200,7 @@ with three:
     with s.expander("Missing years"):
         missingNote(debtToEquitySeries, years, "Debt to equity")
         missingNote(interestCoverageSeries, years, "Interest coverage")
+    s.write("Most recent Year" , df.index.year[0])
 
 
 with four:
@@ -208,7 +218,7 @@ with four:
         "Return on Equity": returnOnEquitySeries,
         "Return on Assets": returnOnAssetsSeries
     },
-    index = [y["year"] for y in years]
+    index = [str(y["year"].year)[0:1] + str(y["year"].year)[1:] for y in years]
     )
 
     s.line_chart(roDF[::-1])
@@ -216,7 +226,17 @@ with four:
     with s.expander("Missing years"):
         missingNote(returnOnEquitySeries, years, "Return on equity")
         missingNote(returnOnAssetsSeries, years, "Return on assets")
+    s.write("Most recent Year" , df.index.year[0])
 
 
 
-# Dataframe, metric<- delta 3rd param, columns(with) tabs, subheader, header, spinner''', line_chart, with s. expander("title")
+
+
+
+s.divider()
+s.download_button(
+    label=f"Download {ticker} financials (.xlsx)",
+    data=workbookBytes(years, ticker),
+    file_name=f"{ticker}_financials.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)

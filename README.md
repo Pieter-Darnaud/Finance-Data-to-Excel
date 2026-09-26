@@ -1,281 +1,311 @@
 # Finance Data to Excel
 
-**🔗 Live app: [finance-data-to-excel.streamlit.app](https://finance-data-to-excel.streamlit.app/)**
+**Live app: [finance-data-to-excel.streamlit.app](https://finance-data-to-excel.streamlit.app/)**
 
-A Python tool that pulls public company financials from Yahoo Finance, computes gross
-margin, classifies each company by margin band, and exports a formatted **Excel
-dashboard**.
+A Python tool that pulls a public company's financial statements from Yahoo Finance,
+computes twelve accounting ratios across every reported year, and presents them as a web
+dashboard with trend charts and a downloadable Excel workbook.
 
-The command-line tool is complete and documented below. A **Streamlit web front-end** is
-in progress at the link above — it wraps the same accounting engine (`metrics.py`) so
-that analyzing a ticker takes a text box instead of a code edit.
+Type a ticker, get the analysis. No installation required.
 
-## What it does
+## What it shows
 
-For a set of tickers, the tool:
+For any ticker, the app reports nine ratios grouped by what they measure:
 
-1. **Pulls** each company's income-statement figures (revenue and cost of revenue)
-   from Yahoo Finance via `yfinance`.
-2. **Screens out** companies that don't report a cost of revenue — see
-   [Handling companies without a COGS line](#handling-companies-without-a-cogs-line).
-3. **Computes** gross margin — `(revenue − COGS) / revenue`.
-4. **Classifies** each company into a margin band:
-   | Flag | Gross margin |
-   |---|---|
-   | `high` | ≥ 70% |
-   | `medium` | 40% – 70% |
-   | `low` | < 40% |
+| Tab | Ratios | Question it answers |
+|---|---|---|
+| Profitability | gross margin, operating margin, net margin | Does the business make money? |
+| Liquidity | current ratio, quick ratio | Can it pay its near-term bills? |
+| Leverage | debt-to-equity, interest coverage | How much debt, and can it service it? |
+| Returns | return on equity, return on assets | How well does it use its capital? |
 
-   *Note: these bands are absolute thresholds describing the raw margin, not
-   industry-adjusted — a grocer's 25% reads as "low" here even though it's healthy for
-   that sector. A future version would flag each company against its own history or
-   industry (see [Roadmap](#roadmap)).*
-5. **Exports** a styled `.xlsx` dashboard with numbers stored as real numbers and
-   formatted for display.
+Each ratio appears as a card showing the current year's value and an arrow marking the
+change from the prior year. Below the cards, a line chart plots the ratio across every
+year Yahoo reports, and an expander lists any years where the figure could not be
+computed.
 
-## Example output
+The eleven raw figures behind the ratios (revenue, cost of revenue, operating income,
+net income, current assets, current liabilities, inventory, total liabilities,
+shareholder equity, total assets, interest expense) sit in a collapsible section at the
+top.
 
-Running the tool for `["MSFT", "AAPL", "GOOGL", "BAC"]` prints:
+## The four files
+
+Each file has one job. The split means the accounting logic can be read and tested on
+its own, and the front end can change without touching it.
 
 ```
-  skipping BAC: no 'Cost Of Revenue' line
+FinancialsProject/
+├── metrics.py          the accounting engine (no imports at all)
+├── data.py             fetches statements from Yahoo Finance
+├── export.py           builds the Excel workbook
+├── app.py              the Streamlit web interface
+├── requirements.txt
+├── README.md
+├── LICENSE             MIT
+└── .gitignore
 ```
 
-and writes:
+### `metrics.py`: the accounting engine
 
-| Ticker | Revenue ($) | Cost of Goods Sold ($) | Gross Margin | Flag |
-|---|---|---|---|---|
-| MSFT | 331,839,000,000 | 106,374,000,000 | 67.9% | medium |
-| AAPL | 416,161,000,000 | 220,960,000,000 | 46.9% | medium |
-| GOOGL | 402,836,000,000 | 162,535,000,000 | 59.7% | medium |
+Twenty-one functions. Twelve compute an accounting figure or ratio; nine compute how a
+ratio changed across years.
 
-Four tickers went in; three rows came out. Bank of America is reported on the terminal
-and left out of the sheet — that's the screening step, explained below.
+This file imports nothing. Every function takes plain numbers and returns a plain
+number, so the math can be checked without a network connection, without pandas, and
+without Streamlit installed.
 
-(Data is pulled live from Yahoo Finance, so figures change over time.)
-
-## Handling companies without a COGS line
-
-Gross margin needs a cost of revenue, and **not every company reports one.** Banks are
-the clearest example: Bank of America's income statement has no cost-of-revenue line
-at all, because a bank doesn't manufacture or buy the thing it sells. Interest expense
-isn't the same concept, so there's no honest substitute to drop in.
-
-That absence is a real fact about the data, and the tool is built to notice it rather
-than paper over it. Two details matter:
-
-**A missing row raises, it doesn't return blank.** Asking pandas for a row label that
-isn't there throws a `KeyError` — it doesn't hand back `None` or zero. So the lookup is
-wrapped in a `try`, and the failure is converted into a value the rest of the program
-can act on:
-
-```python
-def get_financials(companyTicker):
-    try:
-        company = yf.Ticker(companyTicker).financials
-        return {"ticker":  companyTicker,
-                "revenue": company.loc["Total Revenue"].iloc[0],
-                "cogs":    company.loc["Cost Of Revenue"].iloc[0]}
-    except KeyError as e:
-        print(f"  skipping {companyTicker}: no {e} line")
-        return None
-```
-
-**`None` is the signal to skip.** The company builder calls the fetch for each ticker
-and keeps only the ones that came back with data, so a company with no COGS never
-reaches the margin calculation:
-
-```python
-companies = []
-
-def companyChecker(sCompanies):
-    for i in sCompanies:
-        if get_financials(i) != None:
-            companies.append(get_financials(i))
-
-companyChecker(["MSFT", "AAPL", "GOOGL", "BAC"])
-```
-
-The alternative — substituting `0` for the missing COGS — was tried first and rejected.
-It computes to a **100% gross margin**, which would flag a bank as the most profitable
-company in the sheet. Zero and "not reported" are different facts, and only one of them
-is true here.
-
-The trade-off in the current approach is that a screened company disappears from the
-output entirely. Showing it with a blank margin and a `no gross margin` label would be
-more informative, and that requires guarding each field independently rather than
-failing the whole fetch — see the [Roadmap](#roadmap).
-
-## How it works
-
-### 1. Pulling data — `yfinance`
-
-`yfinance` returns each statement as a table (a pandas DataFrame) indexed by line-item
-name, with one column per reporting year. A single value needs **both** coordinates —
-`.loc` picks the row label, `.iloc[0]` picks the most recent year:
-
-```python
-import yfinance as yf
-
-t = yf.Ticker("MSFT")
-revenue = t.financials.loc["Total Revenue"].iloc[0]   # 331,839,000,000
-```
-
-Without `.iloc[0]` the result is the whole row — four years of figures — rather than one
-number, which is a subtle way to end up with the wrong type flowing downstream.
-
-### 2. Computing & classifying — core Python
-
-Each metric is its own function. Every ratio guards its denominator — dividing by zero
-would raise rather than return a number — and returns `"N/A"` when it can't compute:
+Each dividing function guards its inputs before computing. If a value is missing, is
+`NaN`, or would put a zero in the denominator, the function returns `None` rather than
+raising:
 
 ```python
 def grossMargin(revenue, cogs):
-    if revenue == 0:
-        return "N/A"
+    if revenue == 0 or revenue == None or revenue != revenue or cogs == 0 or cogs == None or cogs != cogs:
+        return None
     return (revenue - cogs) / revenue
 ```
 
-A company is stored as a **dictionary** and the set of companies as a **list of
-dictionaries** — one row of the eventual spreadsheet per entry:
+The `revenue != revenue` test catches `NaN`, which is the only value in Python that is
+not equal to itself. A `None` check alone will not catch it, because `NaN is not None`
+evaluates to `True`.
 
-```python
-{"ticker": "MSFT", "revenue": 331839000000.0, "cogs": 106374000000.0}
-```
+The nine `*Delta` functions take a list of one ratio's values across years, drop the
+entries that could not be computed, and return a dictionary of year-over-year changes
+plus an overall change. Margins and returns report percentage change; the four multiples
+report a raw difference. When fewer than two usable years remain, the function returns a
+short string saying so instead of a dictionary.
 
-Named keys rather than positions, so adding a field later (net income, total assets)
-doesn't shift anything already being read. `get_financials` returns this shape directly,
-so the list is built by calling it per ticker rather than assembling dictionaries by
-hand.
-
-A loop classifies each one into a margin band:
-
-```python
-for i in companies:
-    if grossMargin(i["revenue"], i["cogs"]) == "N/A":
-        flag = "no gross margin"
-    elif grossMargin(i["revenue"], i["cogs"]) < 0.4:
-        flag = "low"
-    elif 0.4 <= grossMargin(i["revenue"], i["cogs"]) < 0.7:
-        flag = "medium"
-    else:
-        flag = "high"
-```
-
-### 3. Exporting to Excel — `openpyxl` + formatting
-
-A workbook is created, a header row written, then one row per company. Crucially, the
-**raw numbers** are written to the cells and `number_format` controls how they *display*
-— so the values stay sortable/summable in Excel instead of becoming text:
-
-```python
-import openpyxl as opx
-
-w  = opx.Workbook()
-ws = w.active
-ws["A1"] = "Ticker"; ws["B1"] = "Revenue ($)"
-ws["C1"] = "Cost of Goods Sold ($)"; ws["D1"] = "Gross Margin"; ws["E1"] = "Flag"
-
-for i in range(len(companies)):
-    ws["A" + str(i + 2)] = companies[i]["ticker"]
-    ws["B" + str(i + 2)] = companies[i]["revenue"]
-    ws["B" + str(i + 2)].number_format = "#,##0"        # 331,839,000,000
-    ws["D" + str(i + 2)] = grossMargin(companies[i]["revenue"], companies[i]["cogs"])
-    ws["D" + str(i + 2)].number_format = "0.0%"         # 0.679 → 67.9%
-
-w.save("FinancialsPuller.xlsx")
-```
-
-## Accounting formulas
-
-Each ratio and figure is defined as its own function mirroring a standard accounting
-method:
-
-| Function | Formula | What it represents |
-|---|---|---|
-| `cogs(bInventory, purchases, eInventory)` | beginning inventory + purchases − ending inventory | **Cost of Goods Sold** — the direct cost of the inventory actually sold in the period |
-| `grossProfit(revenue, cogs)` | revenue − COGS | **Gross Profit** — what remains after the direct cost of making the product |
-| `opIncome(grossProfit, opex)` | gross profit − operating expenses | **Operating Income** — profit from core operations, before interest and tax |
-| `grossMargin(revenue, cogs)` | (revenue − COGS) / revenue | **Gross Margin** — gross profit as a share of revenue (the tool's main metric) |
-| `opMargin(opIncome, revenue)` | operating income / revenue | **Operating Margin** — operating income as a share of revenue |
-| `netMargin(netIncome, revenue)` | net income / revenue | **Net Margin** — profit as a share of revenue, after every cost |
-| `currentRatio(currentAssets, currentLiabilities)` | current assets / current liabilities | **Current Ratio** — short-term solvency |
-| `quickRatio(currentAssets, currentLiabilities, inventory)` | (current assets − inventory) / current liabilities | **Quick Ratio** — the stricter liquidity test, excluding stock |
-| `debtToEquity(totalLiabilities, shareholderEquity)` | total liabilities / equity | **Debt-to-Equity** — capital structure risk |
-| `returnOnEquity(netIncome, shareholderEquity)` | net income / equity | **ROE** — return generated on owners' capital |
-| `returnOnAssets(netIncome, totalAssets)` | net income / total assets | **ROA** — how productively assets generate profit |
-| `interestCoverage(operatingIncome, interestExpense)` | operating income / interest expense | **Interest Coverage** — how comfortably debt costs are covered |
-
-`grossMargin` is the metric currently driving the dashboard. The liquidity, leverage, and
-return ratios are built and ready for the next iteration, which adds balance-sheet data
-(`.balance_sheet`) alongside the income statement.
-
-## Python concepts used
-
-- **Functions** — one per metric (`grossMargin`, `grossProfit`, `opMargin`)
-- **Dictionaries & lists** — a company is a `dict`; the set of companies is a `list`
-- **Loops & conditionals** — `for` over the companies, `if`/`elif`/`else` for the bands
-- **f-strings** — formatted terminal output, e.g. `f"{ticker}: {gm:.2%}"`
-- **Error handling** — a `try`/`except` in `get_financials()` catches a missing line
-  item (`KeyError`) and skips the company instead of crashing
-- **Modules & imports** — the tool is split across four files that import from each
-  other, so each layer has one job and can change independently
-- **Third-party libraries** — `yfinance` (data), `openpyxl` (Excel)
-
-## Setup
-
-Requires Python 3.12+.
+**Run it on its own:**
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-python3 -m pip install -r requirements.txt
+python3 -c "from metrics import grossMargin; print(grossMargin(100, 60))"
 ```
 
-## Usage
+### `data.py`: the fetch layer
+
+Two live functions.
+
+`precheck(statement, rowName, year)` pulls one cell out of a statement. yfinance returns
+each statement as a pandas DataFrame indexed by line-item name with one column per
+reporting year, so a single value needs both coordinates: `.loc` picks the row and
+`.iloc[year]` picks the column. If the row is absent or the year is out of range,
+`precheck` returns `None`.
+
+`history(ticker)` fetches the income statement and the balance sheet, then builds one
+dictionary per reporting year:
+
+```python
+{"ticker": "MSFT", "year": Timestamp("2026-06-30"),
+ "revenue": 331839000000.0, "cogs": 106374000000.0, ...}
+```
+
+The list is ordered newest first, so `history("MSFT")[0]` is the most recent year.
+Column counts vary by company and by statement, so the function takes the shorter of the
+two and stops there.
+
+Every field goes through `precheck` individually. A company missing one line item still
+returns complete years for everything else it does report.
+
+**Run it on its own:**
+
+```bash
+python3 -c "from data import history; h = history('MSFT'); print(len(h), 'years'); print(h[0])"
+```
+
+### `export.py`: the Excel writer
+
+`buildWorkbook(years, ticker)` creates a workbook with one row per reporting year,
+oldest first, and fifteen columns: the year, four raw figures, all nine ratios, and a
+margin flag. Number formats are applied per column so currency displays with thousands
+separators and margins display as percentages.
+
+Raw numbers go into the cells and `number_format` controls how they appear. The values
+stay sortable and summable in Excel instead of becoming text.
+
+`workbookBytes(years, ticker)` returns the same workbook as bytes in memory. The web app
+uses this, because Streamlit Cloud's filesystem does not persist between requests.
+
+`marginFlag(gm)` classifies gross margin into bands: below 40% is `low`, 40% to 70% is
+`medium`, above 70% is `high`, and a company with no reported cost of revenue gets `no
+gross margin`.
+
+**Run it on its own** to write one spreadsheet per ticker into the project folder:
 
 ```bash
 python3 export.py
 ```
 
-Writes **`FinancialsPuller.xlsx`** to the project folder (open it in Numbers, Excel, or
-Google Sheets). To analyze different companies, edit the tickers near the top of
-`data.py`.
+Edit the ticker list at the bottom of the file to change which companies it writes.
 
-## Project structure
+### `app.py`: the Streamlit interface
+
+The web front end. Three helper functions sit at the top:
+
+`fmt(value, kind)` turns a number into display text. Percent values get one decimal and a
+`%`, multiples get two decimals and a `×`, currency gets a dollar sign. A missing value
+becomes the string `N/A`.
+
+`deltaOf(result, key, kind)` pulls one year-over-year change out of a `*Delta` result and
+formats it with a sign. It returns `None` when there is not enough history, which tells
+Streamlit to draw the card without an arrow.
+
+`missingNote(series, years, label)` writes one caption describing which years a ratio
+could not be computed for.
+
+Below the helpers, the script reads the ticker from the sidebar, fetches the history,
+computes all nine series, and renders the tabs.
+
+**Run it locally:**
+
+```bash
+streamlit run app.py
+```
+
+This starts a local web server and opens a browser tab. The terminal stays occupied
+until you stop the server with `Ctrl-C`.
+
+## How the pieces connect
 
 ```
-FinancialsProject/
-├── metrics.py          # the accounting engine — pure Python, no library imports
-├── data.py             # pulls financials from Yahoo Finance (yfinance)
-├── export.py           # writes the styled Excel dashboard (openpyxl); entry point
-├── app.py              # reserved for the planned Streamlit front-end
-├── requirements.txt    # dependencies (yfinance, openpyxl)
-├── README.md
-├── LICENSE             # MIT
-└── .gitignore
+data.py  →  metrics.py  →  app.py     (numbers → ratios → screen)
+                        →  export.py  (numbers → ratios → spreadsheet)
 ```
 
-The three layers are deliberately separate: **input** (`data.py`), **brain**
-(`metrics.py`), **output** (`export.py`). `metrics.py` imports nothing at all, so the
-accounting logic can be read, run, and tested without any third-party library installed
-— and swapping the front-end later (Excel today, Streamlit next) never touches it.
+`data.py` produces numbers. `metrics.py` turns numbers into ratios. `app.py` and
+`export.py` each present those ratios in their own format. Neither presentation layer
+knows about the other, and `metrics.py` knows about neither.
+
+One consequence worth noting: a missing value travels as `None` all the way through.
+`fmt` turns it into `"N/A"` on screen, openpyxl leaves the spreadsheet cell blank, and
+pandas reads it as a gap in the chart line. Each consumer renders it in its own idiom
+without the others needing to agree on a format.
+
+## Workflows
+
+### Look up one company
+
+Open the [live app](https://finance-data-to-excel.streamlit.app/), type a ticker in the
+sidebar, read the tabs. Click the download button at the bottom for the spreadsheet.
+
+### Run the dashboard locally
+
+```bash
+git clone https://github.com/Pieter-Darnaud/Finance-Data-to-Excel.git
+cd Finance-Data-to-Excel
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r requirements.txt
+streamlit run app.py
+```
+
+On Windows, the activate line is `.venv\Scripts\activate`.
+
+### Generate spreadsheets for several companies at once
+
+With the environment set up as above:
+
+```bash
+python3 export.py
+```
+
+This writes `MSFT_financials.xlsx`, `AAPL_financials.xlsx`, `GOOGL_financials.xlsx`, and
+`BAC_financials.xlsx`. Change the list at the bottom of `export.py` for different
+companies.
+
+### Use the ratio functions in your own code
+
+`metrics.py` has no dependencies, so it can be copied into any project:
+
+```python
+from metrics import grossMargin, debtToEquity
+
+print(grossMargin(331839000000, 106374000000))   # 0.679...
+print(debtToEquity(315989000000, 442387000000))  # 0.714...
+```
+
+## Accounting formulas
+
+| Function | Formula | What it measures |
+|---|---|---|
+| `cogs(bInventory, purchases, eInventory)` | beginning inventory + purchases − ending inventory | Cost of goods sold, derived from inventory flow |
+| `grossProfit(revenue, cogs)` | revenue − COGS | What remains after the direct cost of the product |
+| `opIncome(grossProfit, opex)` | gross profit − operating expenses | Profit from core operations, before interest and tax |
+| `grossMargin(revenue, cogs)` | (revenue − COGS) / revenue | Share of each sales dollar surviving production cost |
+| `opMargin(opIncome, revenue)` | operating income / revenue | Share surviving production and overhead |
+| `netMargin(netIncome, revenue)` | net income / revenue | Share surviving every cost, including interest and tax |
+| `currentRatio(currentAssets, currentLiabilities)` | current assets / current liabilities | Short-term solvency |
+| `quickRatio(currentAssets, currentLiabilities, inventory)` | (current assets − inventory) / current liabilities | Solvency excluding stock that has to be sold first |
+| `debtToEquity(totalLiabilities, shareholderEquity)` | total liabilities / equity | How much of the company is financed by borrowing |
+| `returnOnEquity(netIncome, shareholderEquity)` | net income / equity | Return generated on owners' capital |
+| `returnOnAssets(netIncome, totalAssets)` | net income / total assets | How productively assets generate profit |
+| `interestCoverage(operatingIncome, interestExpense)` | operating income / interest expense | How many times over operating profit covers the interest bill |
+
+Gross, operating, and net margin read as three checkpoints down the same income
+statement. The gap between gross and operating shows what overhead costs; the gap between
+operating and net shows what financing and tax cost.
+
+## Companies that do not report every line
+
+Not every company reports every figure, and the reasons are structural rather than
+accidental.
+
+A bank has no cost-of-revenue line, because it does not manufacture or buy the thing it
+sells. It also does not split its balance sheet into current and non-current, so current
+assets and current liabilities are absent too. A software company may report no
+inventory. A debt-free company reports no interest expense.
+
+The tool treats an absent figure as absent. It does not substitute zero, which would be
+a different claim: a gross margin computed with zero cost of revenue comes out at 100%,
+which would rank a bank as the most profitable company on the page.
+
+So a bank shows real numbers for leverage and returns, `N/A` for the margin and liquidity
+ratios, and a caption naming which ones are missing and why they could not be computed.
+
+## Python concepts used
+
+- Functions, one per accounting figure, with guards on their inputs
+- Dictionaries and lists: a reporting year is a `dict`, a company's history is a `list`
+- List comprehensions to compute one ratio across every year
+- `for` loops and `if`/`elif`/`else` chains for the margin bands
+- f-strings with format specifiers: `:.1%` for percentages, `:,.0f` for thousands
+- `try`/`except` catching `KeyError` and `IndexError` on a missing statement row
+- `None` as a sentinel for missing data, and the `x != x` test for `NaN`
+- Modules and imports across four files, each importing only what it uses
+- Third-party libraries: yfinance, pandas, openpyxl, Streamlit
+
+## Requirements
+
+Python 3.12 or newer.
+
+```
+yfinance      pulls the financial statements
+openpyxl      writes the Excel workbook
+pandas        the DataFrame the statements arrive in, and the chart data
+streamlit     the web interface
+```
+
+Install them all with:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
 
 ## Built with
 
-- **[yfinance](https://pypi.org/project/yfinance/)** — pulls the financial data
-- **[openpyxl](https://pypi.org/project/openpyxl/)** — writes the Excel dashboard
-- **pandas** — the DataFrame the financial data arrives in (installed with yfinance)
+- [yfinance](https://pypi.org/project/yfinance/) for the financial data
+- [openpyxl](https://pypi.org/project/openpyxl/) for the Excel output
+- [pandas](https://pandas.pydata.org/) for the DataFrames and chart input
+- [Streamlit](https://streamlit.io/) for the web interface and hosting
 
 ## Roadmap
 
-- Show screened companies in the sheet with a blank margin and a `no gross margin`
-  label, instead of omitting them — needs per-field error handling rather than
-  failing the whole fetch
-- Add an operating margin column
-- Flag margin **trend** year-over-year (a company vs. its own history)
-- Read tickers from a file or command-line argument instead of hardcoding
-- A simple web front-end (Streamlit) to analyze any ticker on demand
+- Compare several companies side by side
+- Cache fetched data so a repeated ticker loads instantly
+- Add a DuPont breakdown splitting return on equity into margin, asset turnover, and
+  leverage
+- Read tickers from a file or command-line argument
+- Pull from SEC EDGAR filings instead of Yahoo Finance
 
 ## What I learned
 
@@ -291,3 +321,15 @@ store real numbers as opposed to Strings in my text, keeping excel values useful
 was helpful info. The gross margin formula was simplified to its core, using only the cost
 of goods sold and total revenue values, which certainly made this first phase more
 manageable for me.
+
+For the second phase, I expanded from three hardcoded companies to any ticker a user types
+in, and from one ratio to twelve. Bank of America, which I had originally used just to test
+a gross margin edge case, ended up shaping the whole design. My first version substituted a
+zero for its missing cost of revenue, which produced a 100% gross margin and made the bank
+look like the most profitable company in the sheet. That taught me that a zero and a missing
+value are two different facts, and that storing the missing one as `None` instead let every
+part of the tool handle it in its own way: the web page shows "N/A", the spreadsheet cell
+stays blank, and the chart draws a gap in the line. I also found out that missing data does
+not always arrive the same way, since a line item that is absent entirely raises an error but
+one that is present and empty returns NaN, which raises nothing and quietly spreads into
+every number after it.

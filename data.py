@@ -17,6 +17,7 @@ def precheck(statement, rowName, year):
          return statement.loc[rowName].iloc[year]
      except (KeyError, IndexError):
          return None
+# DEAD CODE - only used by get_financials, which is itself unused
 def new_precheck(statement, rowName):
      try:
          return statement.loc[rowName].iloc[0]
@@ -42,7 +43,9 @@ def history(ticker):
                  "shareholderEquity": precheck(b, "Stockholders Equity", i),
                  "totalAssets": precheck(b, "Total Assets", i),
                  "netIncome": precheck(f, "Net Income", i)})
+        
     return daCol
+
 
 def get_financials(companyTicker):
      t = yf.Ticker(companyTicker)
@@ -74,8 +77,10 @@ def get_financials(companyTicker):
 
 
 
+
 companies = []
 
+# Code from V1, obsolete now
 def companyChecker(sCompanies):
     for i in range(len(sCompanies)):
         fake = True
@@ -88,12 +93,14 @@ def companyChecker(sCompanies):
         
             companies.append(get_financials(sCompanies[i]))
 
-#Testing def functions
-companyChecker(["MSFT", "AAPL", "GOOGL", "BAC"])
+if __name__ == "__main__":
+    companyChecker(["MSFT", "AAPL", "GOOGL", "BAC"])
 
 
 
+f = yf.Ticker("GOOGL")
 
+print(f.financials)
 
 
 
